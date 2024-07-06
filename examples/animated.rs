@@ -75,7 +75,7 @@ struct Oscillates;
 fn oscillate(time: Res<Time>, mut query: Query<&mut Transform, With<Oscillates>>) {
     let seconds = time.elapsed_seconds();
     for mut transform in &mut query.iter_mut() {
-        transform.rotation = Quat::from_rotation_z(cycle(seconds, 10.0));
+        transform.rotation = Quat::from_rotation_z(cycle(seconds, 3.0));
     }
 }
 
