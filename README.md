@@ -5,5 +5,5 @@ cargo run --example basic
 ```
 
 ```
-cargo run --example
+cargo run --example animated
 ```
