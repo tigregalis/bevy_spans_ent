@@ -1,8 +1,8 @@
 pub mod prelude {
-    pub use crate::main::{TextSpan, TextSpans, TsePlugin};
+    pub use crate::lib::{TextSpan, TextSpans, TsePlugin};
 }
 
-mod main {
+mod lib {
 
     use bevy::prelude::*;
 
@@ -13,7 +13,7 @@ mod main {
             app.register_type::<TextSpans>();
             app.register_type::<TextSpan>();
             app.add_systems(
-                Update,
+                PostUpdate,
                 update_parent
                     .before(bevy::ui::widget::measure_text_system)
                     .before(bevy::text::update_text2d_layout),
