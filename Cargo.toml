@@ -1,0 +1,8 @@
+[package]
+name = "bevy_text_span_entities"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# bevy = { path = "../bevy" }
+bevy = { git = "https://github.com/bevyengine/bevy/", rev = "09d86bfb96ccb66020c38485647c002dcfa37956" }
