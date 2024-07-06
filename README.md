@@ -7,3 +7,7 @@ cargo run --example basic
 ```
 cargo run --example animated
 ```
+
+```
+cargo run --example monster
+```
