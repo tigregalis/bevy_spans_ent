@@ -64,7 +64,7 @@ struct Iridescent(f32, f32, f32);
 
 fn iridescence(mut query: Query<(&mut TextSpan, &Iridescent)>, time: Res<Time>) {
     let seconds = time.elapsed_seconds();
-    for (mut span, &Iridescent(r, g, b)) in &mut query.iter_mut() {
+    for (mut span, &Iridescent(r, g, b)) in &mut query {
         span.0.style.color = Color::srgb(cycle(seconds, r), cycle(seconds, g), cycle(seconds, b));
     }
 }
@@ -74,7 +74,7 @@ struct Oscillates;
 
 fn oscillate(time: Res<Time>, mut query: Query<&mut Transform, With<Oscillates>>) {
     let seconds = time.elapsed_seconds();
-    for mut transform in &mut query.iter_mut() {
+    for mut transform in &mut query {
         transform.rotation = Quat::from_rotation_z(cycle(seconds, 3.0));
     }
 }
