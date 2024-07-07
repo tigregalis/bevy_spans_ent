@@ -1,3 +1,5 @@
+use std::f32::consts::TAU;
+
 use bevy::{prelude::*, window::PrimaryWindow};
 use bevy_text_span_entities::prelude::*;
 
@@ -9,6 +11,7 @@ fn main() {
         .add_systems(
             Update,
             (
+                random_walk,
                 damage,
                 sync_current_health.after(damage),
                 sync_max_health.after(damage),
@@ -20,7 +23,7 @@ fn main() {
 fn setup(mut commands: Commands) {
     commands.spawn(Camera2dBundle::default());
 
-    let half_size = Vec2::new(50.0, 80.0);
+    let half_size = Vec2::new(16.0, 25.6);
     let font_size = 16.0;
 
     let monster = Monster { half_size };
@@ -35,6 +38,7 @@ fn setup(mut commands: Commands) {
                 ..Default::default()
             },
             monster,
+            RandomWalkState::default(),
             CurrentHealth(10),
             MaxHealth(10),
         ))
@@ -80,7 +84,7 @@ fn setup(mut commands: Commands) {
                         TextSpan(TextSection {
                             value: "PLACEHOLDER".to_string(),
                             style: TextStyle {
-                                color: Color::srgb(0.0, 0.0, 1.0),
+                                color: Color::srgb(0.9, 0.8, 1.0),
                                 font_size,
                                 ..Default::default()
                             },
@@ -139,6 +143,42 @@ fn damage(
                     }
                 }
             }
+        }
+    }
+}
+
+#[derive(Component)]
+struct RandomWalkState {
+    timer: Timer,
+    direction: Vec2,
+}
+
+impl Default for RandomWalkState {
+    fn default() -> Self {
+        Self {
+            timer: Timer::from_seconds(0.5, TimerMode::Repeating),
+            direction: Vec2::from_angle(TAU / 0.36),
+        }
+    }
+}
+
+fn random_walk(
+    time: Res<Time>,
+    mut monster: Query<(&mut Transform, &mut RandomWalkState), With<Monster>>,
+) {
+    for (mut transform, mut state) in &mut monster {
+        transform.translation += (400.0 * state.direction * time.delta_seconds()).extend(0.0);
+        state.timer.tick(time.delta());
+        if state.timer.just_finished() {
+            // change direction
+            let new_direction = time.elapsed_seconds().sin() * 0.5 + 0.5;
+            let new_direction = new_direction * TAU;
+            state.direction = Vec2::from_angle(new_direction);
+        }
+        // if too far from the centre, run to the centre
+        if transform.translation.x.abs() > 500.0 || transform.translation.y.abs() > 500.0 {
+            let new_direction = -transform.translation.truncate().normalize();
+            state.direction = new_direction;
         }
     }
 }
