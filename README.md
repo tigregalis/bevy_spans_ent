@@ -11,3 +11,12 @@ cargo run --example animated
 ```
 cargo run --example monster
 ```
+
+```
+cargo expand --example macro
+cargo run --example macro
+```
+
+```
+cargo run --example advanced
+```
