@@ -200,7 +200,6 @@ fn navigate_effect(
     spans: Query<(&Link, &LinkNotifier), Changed<LinkNotifier>>,
     mut mutables: Query<(&mut TextSpan, &mut Mutate)>,
 ) {
-    // TODO: bug that means this is triggered once at app start-up
     for (link, notifier) in &spans {
         if !notifier.0 {
             continue;
@@ -236,6 +235,7 @@ impl Notifier for HoverNotifier {
         self.0 = true;
     }
 }
+
 impl Notifier for LinkNotifier {
     fn notify(&mut self) {
         self.0 = true;
@@ -263,7 +263,6 @@ struct HitSystemParams<'w, 's> {
 }
 
 /// Assumes only one entity gets hit (early returns)
-
 #[allow(clippy::type_complexity)]
 fn hit(params: HitSystemParams) -> Option<Entity> {
     let window = params.window.single();
@@ -284,7 +283,7 @@ fn hit(params: HitSystemParams) -> Option<Entity> {
             let offset = origin - size / 2.0;
             // position in buffer
             let position = cursor_window_position - offset;
-            // TODO: fix the issue where this always registers a hit on the first span if no other is hit
+            // TODO: fix the issue where this always registers a hit on the first span if no other is hit (cosmic-text issue?)
             if let Some(text_cursor) = buffer.hit(position.x, position.y) {
                 // get attrs from cursor
                 let line = &buffer.lines[text_cursor.line];

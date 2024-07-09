@@ -79,6 +79,7 @@ fn oscillate(time: Res<Time>, mut query: Query<&mut Transform, With<Oscillates>>
     }
 }
 
+/// varies between 0 and 1
 fn cycle(seconds: f32, frequency: f32) -> f32 {
-    (seconds * frequency).sin()
+    (seconds * frequency).sin() * 0.5 + 0.5
 }
