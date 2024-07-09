@@ -1,5 +1,5 @@
 pub mod prelude {
-    pub use crate::helper::text;
+    pub use crate::helper::{text, text2d};
     pub use crate::lib::{TextSpan, TextSpans, TsePlugin};
 }
 
