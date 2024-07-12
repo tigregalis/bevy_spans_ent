@@ -7,9 +7,9 @@
 //! 4. Working backwards, update the `Text` component from the updated `Buffer`
 //!
 //! TODO:
-//! 1. when cursor is at 0 on any line, it doesn't insert anything... why?
-//! 2. when I empty the buffer all hell breaks loose
-//! 3. when I try to backspace from the start of a line, sometimes everything blows up
+//! ~~1. when cursor is at 0 on any line, it doesn't insert anything... why?~~
+//! ~~2. when I empty the buffer all hell breaks loose~~
+//! ~~3. when I try to backspace from the start of a line, sometimes everything blows up~~
 //! 4. store and selections
 //! 5. the cursor should be its own entity! (and there should be the possibility of multiple cursors)
 //! 6. multiple windows
@@ -166,16 +166,44 @@ fn listen_keyboard_input_events(
 
             // rebuild the text from scratch
             for line in &buf.lines {
-                let text = line.text();
+                let line_text = dbg!(line.text());
+                let len = line_text.len();
                 let ending = line.ending().as_str();
                 let spans = line.attrs_list().spans();
-                let count = spans.len();
-                for (i, (range, attrs)) in spans.into_iter().enumerate() {
-                    let s = scratch_spans_for_update.entry(attrs.metadata).or_default();
-                    s.push_str(&text[range.clone()]);
-                    if i + 1 == count {
+                // NOTE: cosmic-text allows for "unstyled" (default-styled) spans/ranges
+                //       this means not all `spans` actually have styles
+                //       so imagine a line with 21 characters (full range 0..21)
+                //       the `spans` iterator can yield for example 2..7, 9..12, 12..13, 13..16, 17..19
+                //       so 0..2, 7..9, 16..17, 19..21 are unstyled, and we have to specially handle these
+                //       in this case, we will style
+                //       0..2 like 2..7 (unstyled span will be styled like next styled span)
+                //       7..9 like 9..12 (unstyled span will be styled like next styled span)
+                //       16..17 like 17..19 (unstyled span will be styled like next styled span)
+                //       19..21 like 17..19 (final part of line, unstyled span will be styled like previous styled span)
+                let mut current_pos = 0;
+                let mut bevy_span_index = 0;
+                for (range, attrs) in spans.into_iter() {
+                    bevy_span_index = attrs.metadata;
+                    let s = scratch_spans_for_update.entry(bevy_span_index).or_default();
+                    // "unstyled" spans will take the following range's attrs
+                    if current_pos < range.start {
+                        s.push_str(&line_text[current_pos..range.start]);
+                    }
+                    // push the styled span
+                    s.push_str(&line_text[range.clone()]);
+                    current_pos = range.end;
+                    // push the line ending if we've reached the end of the line
+                    if current_pos == len {
                         s.push_str(ending);
                     }
+                }
+                // final part of the line
+                if current_pos < len {
+                    let s = scratch_spans_for_update.entry(bevy_span_index).or_default();
+                    // push the styled span
+                    s.push_str(&line_text[current_pos..len]);
+                    // push the line ending since we've reached the end of the line
+                    s.push_str(ending);
                 }
             }
 
