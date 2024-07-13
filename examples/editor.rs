@@ -10,22 +10,32 @@
 //! ~~1. when cursor is at 0 on any line, it doesn't insert anything... why?~~
 //! ~~2. when I empty the buffer all hell breaks loose~~
 //! ~~3. when I try to backspace from the start of a line, sometimes everything blows up~~
-//! 4. store and selections
+//! ~~4. selections~~
 //! 5. the cursor should be its own entity! (and there should be the possibility of multiple cursors)
 //! 6. multiple windows
 //! 7. "Focused" Editor, not every editor
 //! 8. "external"/programmatic changes to the text/spans should update the cursor/selection safely
 //! 9. currently text spans have been cut out of this implementation
 //! 10. with spans-as-entities (not yet implemented) it should be possible to restrict editing (e.g. only edit a span)
+//! ~~11. mouse click handling~~
+//! 12. mouse drag handling
+//! 13. multi-click handling is a little bit broken...
+//!     (sometimes loses clicks, sometimes over-clicks... this might be a bevy one frame delay thing)
+//!     maybe this implementation is better? https://devblogs.microsoft.com/oldnewthing/20041018-00/?p=37543
+//! 14. selections are a little bit broken (or is this just a feature?): multi-click changes the selection "mode"
+//! 15. shift/ctrl/alt/esc handling
+//! 16. the selection should be its own entity! (and there should be the possibility of multiple selections)
 
-use std::collections::HashMap;
+use std::cmp;
+use std::collections::{HashMap, VecDeque};
+use std::time::{Duration, Instant};
 
 use bevy::ecs::system::SystemParam;
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::ButtonState;
 use bevy::prelude::*;
 use bevy::render::{Extract, ExtractSchedule, RenderApp};
-use bevy::text::cosmic_text::{Action, Buffer, Cursor, Edit, Editor, LayoutRun, Motion};
+use bevy::text::cosmic_text::{Action, Buffer, Cursor, Edit, Editor, LayoutRun, Motion, Selection};
 use bevy::text::CosmicBuffer;
 use bevy::ui::{ExtractedUiNode, ExtractedUiNodes, NodeType, RenderUiSystem};
 use bevy::window::PrimaryWindow;
@@ -41,13 +51,16 @@ fn main() {
             PreUpdate,
             (hit.pipe(handle_click), listen_keyboard_input_events),
         )
-        .add_systems(Update, animate_cursor);
+        .add_systems(Update, (animate_cursor, animate_selection));
     let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
         return;
     };
     render_app.add_systems(
         ExtractSchedule,
-        extract_cursor.in_set(RenderUiSystem::ExtractText),
+        (
+            extract_selection.before(RenderUiSystem::ExtractText),
+            extract_cursor.after(RenderUiSystem::ExtractText),
+        ),
     );
     app.run();
 }
@@ -67,7 +80,72 @@ fn setup(mut commands: Commands) {
         ("and so on and so forth...", style, (A, B))
     ]);
 
-    parent.insert((EditorState::default(), CursorConfig::default()));
+    parent.insert((
+        EditorState::default(),
+        CursorConfig::default(),
+        SelectionConfig::default(),
+    ));
+}
+
+#[derive(Debug)]
+struct ClickHistoryEntry {
+    position: Vec2,
+    time: Instant,
+}
+
+#[derive(Debug)]
+struct ClickHistory {
+    history: VecDeque<ClickHistoryEntry>,
+}
+
+impl Default for ClickHistory {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ClickHistory {
+    const MAX_ENTRIES: usize = 4;
+    const MAX_DISTANCE: f32 = 2.0;
+    const MAX_INTERVAL: Duration = Duration::from_millis(500);
+
+    fn new() -> Self {
+        Self {
+            history: VecDeque::with_capacity(Self::MAX_ENTRIES),
+        }
+    }
+
+    fn add_entry(&mut self, position: Vec2) {
+        // drop down to the most recent entries, with room for one more
+        while self.history.len() >= Self::MAX_ENTRIES {
+            self.history.pop_back();
+        }
+        // add the new entry
+        self.history.push_front(ClickHistoryEntry {
+            position,
+            time: Instant::now(),
+        });
+    }
+
+    fn clicked(&self, times: usize) -> bool {
+        let len = self.history.len();
+        if len < times {
+            return false;
+        }
+        let mut iter = self.history.iter().take(times).peekable();
+        while let Some(a) = iter.next() {
+            if let Some(b) = iter.peek() {
+                debug_assert!(a.time > b.time);
+                if a.position.distance(b.position) > Self::MAX_DISTANCE {
+                    return false;
+                }
+                if a.time - b.time > Self::MAX_INTERVAL {
+                    return false;
+                }
+            }
+        }
+        true
+    }
 }
 
 /// Piped from [`hit`]
@@ -77,6 +155,7 @@ fn setup(mut commands: Commands) {
 #[allow(clippy::type_complexity)]
 fn handle_click(
     In(hit): In<Option<HitOutput>>,
+    mut click_history: Local<ClickHistory>,
     mouse_button: Res<ButtonInput<MouseButton>>,
     mut buffer: Query<(&mut CosmicBuffer, &mut EditorState), With<Text>>,
     mut text_pipeline: ResMut<bevy::text::TextPipeline>,
@@ -92,19 +171,44 @@ fn handle_click(
     else {
         return;
     };
+    click_history.add_entry(position);
+
     let Ok((mut buf, mut state)) = buffer.get_mut(parent) else {
         return;
     };
     let new_state = {
         let mut editor = TempEditor::new(&mut buf.0, *state);
         let font_system = text_pipeline.font_system_mut();
-        editor.action(
-            font_system,
-            Action::Click {
-                x: position.x as i32,
-                y: position.y as i32,
-            },
-        );
+        if click_history.clicked(3) {
+            info!("triple-click: {click_history:?}");
+            editor.action(
+                font_system,
+                Action::TripleClick {
+                    x: position.x as i32,
+                    y: position.y as i32,
+                },
+            );
+        } else if click_history.clicked(2) {
+            info!("double-click: {click_history:?}");
+            editor.action(
+                font_system,
+                Action::DoubleClick {
+                    x: position.x as i32,
+                    y: position.y as i32,
+                },
+            );
+        } else if click_history.clicked(1) {
+            info!("single-click: {click_history:?}");
+            editor.action(
+                font_system,
+                Action::Click {
+                    x: position.x as i32,
+                    y: position.y as i32,
+                },
+            );
+        } else {
+            unreachable!("clicked but zero clicks?");
+        }
         editor.state()
     };
     *state = new_state;
@@ -344,6 +448,123 @@ fn extract_cursor(
     }
 }
 
+/// Adapted from `bevy_ui::extract_uinode_text` and `bevy_ui::extract_uinode_background_colors`
+#[allow(clippy::type_complexity)]
+fn extract_selection(
+    mut commands: Commands,
+    mut extracted_uinodes: ResMut<ExtractedUiNodes>,
+    camera_query: Extract<Query<(Entity, &Camera)>>,
+    default_ui_camera: Extract<DefaultUiCamera>,
+    ui_scale: Extract<Res<UiScale>>,
+    // TODO: the selection should be its own entity!?
+    uinode_query: Extract<
+        Query<
+            (
+                &Node,
+                &GlobalTransform,
+                &ViewVisibility,
+                Option<&CalculatedClip>,
+                Option<&TargetCamera>,
+                Option<&SelectionConfig>,
+                &CosmicBuffer,
+                &EditorState,
+            ),
+            With<Text>,
+        >,
+    >,
+) {
+    for (
+        uinode,
+        global_transform,
+        view_visibility,
+        clip,
+        camera,
+        selection_config,
+        buffer,
+        editor_state,
+    ) in &uinode_query
+    {
+        if editor_state.selection == Selection::None {
+            continue;
+        };
+
+        let Some(camera_entity) = camera.map(TargetCamera::entity).or(default_ui_camera.get())
+        else {
+            continue;
+        };
+
+        // Skip if not visible or if size is set to zero (e.g. when a parent is set to `Display::None`)
+        if !view_visibility.get() || uinode.size().x == 0. || uinode.size().y == 0. {
+            continue;
+        }
+
+        let scale_factor = camera_query
+            .get(camera_entity)
+            .ok()
+            .and_then(|(_, c)| c.target_scaling_factor())
+            .unwrap_or(1.0)
+            * ui_scale.0;
+        let inverse_scale_factor = scale_factor.recip();
+
+        // Align the text to the nearest physical pixel:
+        // * Translate by minus the text node's half-size
+        //      (The transform translates to the center of the node but the text coordinates are relative to the node's top left corner)
+        // * Multiply the logical coordinates by the scale factor to get its position in physical coordinates
+        // * Round the physical position to the nearest physical pixel
+        // * Multiply by the rounded physical position by the inverse scale factor to return to logical coordinates
+
+        let logical_top_left = -0.5 * uinode.size();
+
+        let mut transform = global_transform.affine()
+            * bevy::math::Affine3A::from_translation(logical_top_left.extend(0.));
+
+        transform.translation *= scale_factor;
+        transform.translation = transform.translation.round();
+        transform.translation *= inverse_scale_factor;
+
+        let selection_config = match selection_config {
+            Some(c) => *c,
+            None => Default::default(),
+        };
+        let color = selection_config.color.into();
+
+        for run in buffer.layout_runs() {
+            // TODO: this should happen in the main world so that we do as little work as possible here
+            if let Some((x, y, width)) =
+                highlight_selection(editor_state.selection_bounds, buffer.size().0, &run)
+            {
+                let position = Vec2::new(
+                    x as f32 + width as f32 / 2.0,
+                    y as f32 + run.line_height / 2.0,
+                );
+                extracted_uinodes.uinodes.insert(
+                    commands.spawn_empty().id(),
+                    ExtractedUiNode {
+                        stack_index: uinode.stack_index(),
+                        transform: transform
+                            * Mat4::from_translation(position.extend(0.) * inverse_scale_factor),
+                        color,
+                        rect: Rect {
+                            min: Vec2::ZERO,
+                            // TODO: size?
+                            max: Vec2::new(width as f32, run.line_height),
+                        },
+                        image: AssetId::default(),
+                        atlas_size: None,
+                        clip: clip.map(|clip| clip.clip),
+                        flip_x: false,
+                        flip_y: false,
+                        camera_entity,
+                        border: [0.; 4],
+                        border_radius: [0.; 4],
+                        node_type: NodeType::Rect,
+                    },
+                );
+            }
+        }
+    }
+}
+
 // from cosmic-text/src/edit/editor.rs:66
 fn cursor_position(cursor: &Cursor, run: &LayoutRun) -> Option<(i32, i32)> {
     let (cursor_glyph, cursor_glyph_offset) = cursor_glyph_opt(cursor, run)?;
@@ -373,6 +594,65 @@ fn cursor_position(cursor: &Cursor, run: &LayoutRun) -> Option<(i32, i32)> {
     };
 
     Some((x, run.line_top as i32))
+}
+
+// adapted from cosmic-text/src/edit/editor.rs:?
+fn highlight_selection(
+    selection_bounds: Option<(Cursor, Cursor)>,
+    buffer_width: Option<f32>,
+    run: &LayoutRun,
+) -> Option<(i32, i32, u32)> {
+    let line_i = run.line_i;
+    let line_top = run.line_top;
+
+    // Highlight selection
+    if let Some((start, end)) = selection_bounds {
+        if line_i >= start.line && line_i <= end.line {
+            let mut range_opt = None;
+            for glyph in run.glyphs.iter() {
+                // Guess x offset based on characters
+                let cluster = &run.text[glyph.start..glyph.end];
+                let total = cluster.grapheme_indices(true).count();
+                let mut c_x = glyph.x;
+                let c_w = glyph.w / total as f32;
+                for (i, c) in cluster.grapheme_indices(true) {
+                    let c_start = glyph.start + i;
+                    let c_end = glyph.start + i + c.len();
+                    if (start.line != line_i || c_end > start.index)
+                        && (end.line != line_i || c_start < end.index)
+                    {
+                        range_opt = match range_opt.take() {
+                            Some((min, max)) => {
+                                Some((cmp::min(min, c_x as i32), cmp::max(max, (c_x + c_w) as i32)))
+                            }
+                            None => Some((c_x as i32, (c_x + c_w) as i32)),
+                        };
+                    } else if let Some((min, max)) = range_opt.take() {
+                        return Some((min, line_top as i32, cmp::max(0, max - min) as u32));
+                    }
+                    c_x += c_w;
+                }
+            }
+
+            if run.glyphs.is_empty() && end.line > line_i {
+                // Highlight all of internal empty lines
+                range_opt = Some((0, buffer_width.unwrap_or(0.0) as i32));
+            }
+
+            if let Some((mut min, mut max)) = range_opt.take() {
+                if end.line > line_i {
+                    // Draw to end of line
+                    if run.rtl {
+                        min = 0;
+                    } else {
+                        max = buffer_width.unwrap_or(0.0) as i32;
+                    }
+                }
+                return Some((min, line_top as i32, cmp::max(0, max - min) as u32));
+            }
+        }
+    }
+    None
 }
 
 // from cosmic-text/src/edit/editor.rs:30
@@ -426,6 +706,7 @@ impl<'buffer> TempEditor<'buffer> {
         let mut editor = Editor::new(buffer);
         if let Some(cursor) = state.cursor {
             editor.set_cursor(cursor);
+            editor.set_selection(state.selection);
         }
         Self(editor)
     }
@@ -433,13 +714,27 @@ impl<'buffer> TempEditor<'buffer> {
     fn state(&self) -> EditorState {
         EditorState {
             cursor: Some(self.cursor()),
+            selection: self.selection(),
+            selection_bounds: self.selection_bounds(),
         }
     }
 }
 
-#[derive(Component, Clone, Copy, Default)]
+#[derive(Component, Clone, Copy)]
 struct EditorState {
     cursor: Option<Cursor>,
+    selection: Selection,
+    selection_bounds: Option<(Cursor, Cursor)>,
+}
+
+impl Default for EditorState {
+    fn default() -> Self {
+        Self {
+            cursor: None,
+            selection: Selection::None,
+            selection_bounds: None,
+        }
+    }
 }
 
 #[derive(Component, Clone, Copy)]
@@ -453,6 +748,19 @@ impl Default for CursorConfig {
         Self {
             color: Color::LinearRgba(LinearRgba::WHITE),
             width: 1.0,
+        }
+    }
+}
+
+#[derive(Component, Clone, Copy)]
+struct SelectionConfig {
+    color: Color,
+}
+
+impl Default for SelectionConfig {
+    fn default() -> Self {
+        Self {
+            color: Color::LinearRgba(LinearRgba::BLACK),
         }
     }
 }
@@ -529,6 +837,18 @@ fn animate_cursor(mut query: Query<&mut CursorConfig>, time: Res<Time>) {
             cycle(seconds, 1.7) * 0.5 + 0.5, // varies between 0.5 and 1
         );
         config.width = 2.0 + 8.0 * cycle(seconds, 8.0); // varies between 2 and 10
+    }
+}
+
+fn animate_selection(mut query: Query<&mut SelectionConfig>, time: Res<Time>) {
+    let seconds = time.elapsed_seconds();
+
+    for mut config in &mut query {
+        config.color = Color::srgb(
+            cycle(seconds, 0.9) * 0.5, // varies between 0 and 0.5
+            cycle(seconds, 1.5) * 0.5, // varies between 0 and 0.5
+            cycle(seconds, 1.9) * 0.5, // varies between 0 and 0.5
+        );
     }
 }
 
