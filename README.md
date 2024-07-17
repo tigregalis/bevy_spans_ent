@@ -1,3 +1,5 @@
+# `bevy_spans_ent`
+
 A proof of concept for "spans as entities" for `bevy_text`.
 
 ```sh
@@ -19,9 +21,4 @@ cargo run --example macro
 
 ```sh
 cargo run --example advanced
-```
-
-```sh
-# technically doesn't make use of spans yet
-cargo run --example editor
 ```

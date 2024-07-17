@@ -6,6 +6,3 @@ edition = "2021"
 [dependencies]
 # bevy = { path = "../bevy" }
 bevy = { git = "https://github.com/bevyengine/bevy/", rev = "09d86bfb96ccb66020c38485647c002dcfa37956" }
-
-[dev-dependencies]
-unicode-segmentation = "1.11.0"
